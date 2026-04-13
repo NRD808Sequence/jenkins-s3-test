@@ -1,109 +1,132 @@
 pipeline {
     agent any
-   
+
     environment {
-        AWS_REGION = 'us-east-1' 
+        AWS_REGION     = 'us-east-1'
+        TF_IN_AUTOMATION = 'true'
+        TF_INPUT         = '0'
+        TF_CLI_ARGS      = '-no-color'
     }
+
     stages {
+
+        // -----------------------------------------------------------------
+        // 1. SET AWS CREDENTIALS
+        // Verify stored IAM credential binding works before touching infra.
+        // -----------------------------------------------------------------
         stage('Set AWS Credentials') {
             steps {
                 withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'AWS_SECRET_ACCESS_KEY' 
+                    credentialsId: 'AWS_SECRET_ACCESS_KEY'
                 ]]) {
-                    sh '''
-                    echo "AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID"
-                    aws sts get-caller-identity
-                    '''
+                    sh 'aws sts get-caller-identity'
                 }
-            }
-        }
-        stage('Checkout Code') {
-            steps {
-                git branch: 'main', url: 'https://github.com/NRD808Sequence/jenkins-s3-test/' 
             }
         }
 
-        stage('Testing') {
-            // withEnv(["JFROG_BINARY_PATH=${tool 'jfrog-cli'}"]) {
-            // // The 'jf' tool is available in this scope.
-            // }
-            steps {
-                withCredentials([string(credentialsId: 'jfrog-creds', variable: 'JFROG_TOKEN')]) {
-                    // Show the installed version of JFrog CLI
-                    jf '-v'
-                    
-                    // Show the configured JFrog Platform instances
-                    jf 'c show'
-                    
-                    // Ping Artifactory
-                    jf 'rt ping'
-                    
-                    // Create a file and upload it to the repository
-                    sh 'touch test-file'
-                    // Fixed upload command syntax
-                    sh 'jf rt upload test-file tf-terraform/ --url=https://trial7zoppg.jfrog.io/artifactory/ --user=mcdonald.dm.aaron@gmail.com --password=$JFROG_TOKEN'
-                    
-                    // Publish the build-info to Artifactory
-                    jf 'rt bp'
-                    
-                    // Fixed download command syntax
-                    sh 'jf rt download tf-terraform/test-file --url=https://trial7zoppg.jfrog.io/artifactory/ --user=mcdonald.dm.aaron@gmail.com --password=$JFROG_TOKEN'
-                }
-            } 
-        }
-    
-        stage('Initialize Terraform') {
+        // -----------------------------------------------------------------
+        // 2. S3 ARTIFACT TEST
+        // Upload a test file, verify round-trip download, then clean up.
+        // Proves the IAM credential has s3:PutObject / s3:GetObject.
+        // -----------------------------------------------------------------
+        stage('S3 Artifact Test') {
             steps {
                 withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
                     credentialsId: 'AWS_SECRET_ACCESS_KEY'
                 ]]) {
                     sh '''
-                    export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-                    export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
-                    terraform init
+                        echo "Build ${BUILD_NUMBER} artifact - $(date -u)" > test-artifact.txt
+
+                        echo "--- Uploading ---"
+                        aws s3 cp test-artifact.txt \
+                            s3://class7-armagaggeon-tf-bucket/jenkins-artifacts/test-artifact-${BUILD_NUMBER}.txt
+
+                        echo "--- Downloading ---"
+                        aws s3 cp \
+                            s3://class7-armagaggeon-tf-bucket/jenkins-artifacts/test-artifact-${BUILD_NUMBER}.txt \
+                            downloaded-artifact.txt
+
+                        echo "--- Verifying ---"
+                        diff test-artifact.txt downloaded-artifact.txt \
+                            && echo "S3 ARTIFACT TEST PASSED"
+
+                        echo "--- Cleaning up ---"
+                        aws s3 rm \
+                            s3://class7-armagaggeon-tf-bucket/jenkins-artifacts/test-artifact-${BUILD_NUMBER}.txt
                     '''
                 }
             }
         }
 
-        stage('Plan Terraform') {
+        // -----------------------------------------------------------------
+        // 3. TERRAFORM INIT
+        // -----------------------------------------------------------------
+        stage('TF Init') {
             steps {
                 withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
                     credentialsId: 'AWS_SECRET_ACCESS_KEY'
                 ]]) {
-                    sh '''
-                    export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-                    export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
-                    terraform plan -out=tfplan
-                    '''
+                    sh 'terraform init -reconfigure'
                 }
             }
         }
-        stage('Apply Terraform') {
+
+        // -----------------------------------------------------------------
+        // 4. TERRAFORM PLAN
+        // -----------------------------------------------------------------
+        stage('TF Plan') {
             steps {
-                input message: "Approve Terraform Apply?", ok: "Deploy"
                 withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
                     credentialsId: 'AWS_SECRET_ACCESS_KEY'
                 ]]) {
-                    sh '''
-                    export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-                    export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
-                    terraform apply -auto-approve tfplan
-                    '''
+                    sh 'terraform plan -out=tfplan'
+                }
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // 5. TERRAFORM APPLY
+        // Human gate — review plan before any bucket is created.
+        // -----------------------------------------------------------------
+        stage('TF Apply') {
+            steps {
+                input message: 'Review the plan above. Proceed to create the S3 bucket?', ok: 'Deploy'
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    sh 'terraform apply -auto-approve tfplan'
+                }
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // 6. TERRAFORM DESTROY
+        // Human gate — explicit approval required to tear down.
+        // -----------------------------------------------------------------
+        stage('TF Destroy') {
+            steps {
+                input message: 'Destroy the S3 bucket created by this run?', ok: 'Destroy'
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    sh 'terraform destroy -auto-approve'
                 }
             }
         }
     }
+
     post {
         success {
-            echo 'Terraform deployment completed successfully!'
+            echo 'Pipeline completed successfully.'
         }
         failure {
-            echo 'Terraform deployment failed!'
+            echo 'Pipeline failed — check stage logs above.'
         }
     }
 }
