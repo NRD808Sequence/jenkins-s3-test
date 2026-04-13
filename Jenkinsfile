@@ -18,7 +18,7 @@ pipeline {
             steps {
                 withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'AWS_SECRET_ACCESS_KEY'
+                    credentialsId: 'JenkinsTest01'
                 ]]) {
                     sh 'aws sts get-caller-identity'
                 }
@@ -34,7 +34,7 @@ pipeline {
             steps {
                 withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'AWS_SECRET_ACCESS_KEY'
+                    credentialsId: 'JenkinsTest01'
                 ]]) {
                     sh '''
                         echo "Build ${BUILD_NUMBER} artifact - $(date -u)" > test-artifact.txt
@@ -67,7 +67,7 @@ pipeline {
             steps {
                 withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'AWS_SECRET_ACCESS_KEY'
+                    credentialsId: 'JenkinsTest01'
                 ]]) {
                     sh 'terraform init -reconfigure'
                 }
@@ -81,7 +81,7 @@ pipeline {
             steps {
                 withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'AWS_SECRET_ACCESS_KEY'
+                    credentialsId: 'JenkinsTest01'
                 ]]) {
                     sh 'terraform plan -out=tfplan'
                 }
@@ -97,7 +97,7 @@ pipeline {
                 input message: 'Review the plan above. Proceed to create the S3 bucket?', ok: 'Deploy'
                 withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'AWS_SECRET_ACCESS_KEY'
+                    credentialsId: 'JenkinsTest01'
                 ]]) {
                     sh 'terraform apply -auto-approve tfplan'
                 }
@@ -113,7 +113,7 @@ pipeline {
                 input message: 'Destroy the S3 bucket created by this run?', ok: 'Destroy'
                 withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'AWS_SECRET_ACCESS_KEY'
+                    credentialsId: 'JenkinsTest01'
                 ]]) {
                     sh 'terraform destroy -auto-approve'
                 }
