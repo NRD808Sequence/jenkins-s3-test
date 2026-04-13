@@ -75,7 +75,26 @@ pipeline {
         }
 
         // -----------------------------------------------------------------
-        // 4. TERRAFORM PLAN
+        // 4. PIKE SCAN
+        // Outputs the minimum IAM policy required for this TF code.
+        // Non-blocking (|| true) — never kills the pipeline.
+        // -----------------------------------------------------------------
+        stage('Pike Scan') {
+            steps {
+                sh '''
+                    docker run --rm \
+                        --volume "${WORKSPACE}:/tf" \
+                        jameswoolfenden/pike scan -d /tf -o json \
+                        > pike-policy.json 2>&1 || true
+                    echo "=== Pike Minimum IAM Policy ==="
+                    cat pike-policy.json
+                '''
+                archiveArtifacts artifacts: 'pike-policy.json', allowEmptyArchive: true
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // 5. TERRAFORM PLAN
         // -----------------------------------------------------------------
         stage('TF Plan') {
             steps {
@@ -89,7 +108,7 @@ pipeline {
         }
 
         // -----------------------------------------------------------------
-        // 5. TERRAFORM APPLY
+        // 6. TERRAFORM APPLY
         // Human gate — review plan before any bucket is created.
         // -----------------------------------------------------------------
         stage('TF Apply') {
@@ -105,7 +124,7 @@ pipeline {
         }
 
         // -----------------------------------------------------------------
-        // 6. TERRAFORM DESTROY
+        // 7. TERRAFORM DESTROY
         // Human gate — explicit approval required to tear down.
         // -----------------------------------------------------------------
         stage('TF Destroy') {
